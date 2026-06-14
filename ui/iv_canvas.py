@@ -268,25 +268,41 @@ class IVCanvas(QWidget):
         self._apply_axis_limits()
         self._canvas.draw_idle()
 
+    def _get_mode_coords(self, voltages, currents, area, params=None, norm_factor=None):
+        """统一的模式坐标转换函数。对曲线和MPP点使用完全相同的映射逻辑，
+        返回 (x_coords, y_coords, used_norm_factor)。当 norm_factor=None 时
+        自动计算并返回，用于后续对同一曲线的 MPP 标注进行一致的归一化。"""
+        if self._current_mode == 'IV':
+            x = voltages
+            y = currents * 1000
+            return x, y, None
+        elif self._current_mode == 'JV':
+            x = voltages
+            y = (currents / area) * 1000
+            return x, y, None
+        elif self._current_mode == 'PV':
+            x = voltages
+            y = np.abs(voltages * currents) * 1000
+            return x, y, None
+        else:
+            x = voltages
+            if norm_factor is None:
+                if len(currents) > 0 and area > 0:
+                    norm_factor = float(np.max(np.abs(currents / area)) * 1000)
+                else:
+                    norm_factor = 1.0
+            if norm_factor > 0:
+                y = ((currents / area) * 1000) / norm_factor
+            else:
+                y = currents
+            return x, y, norm_factor
+
     def _plot_single_curve(self, dataset: IVDataSet, params: PVParams, style: CurveStyle):
-        voltages = np.array(dataset.voltages)
-        currents = np.array(dataset.currents)
+        voltages = np.array(dataset.voltages, dtype=np.float64)
+        currents = np.array(dataset.currents, dtype=np.float64)
         area = params.cell_area if params.cell_area > 0 else 1.0
 
-        if self._current_mode == 'IV':
-            y_vals = currents * 1000
-            x_vals = voltages
-            y_label_data = y_vals
-        elif self._current_mode == 'JV':
-            y_vals = (currents / area) * 1000
-            x_vals = voltages
-        elif self._current_mode == 'PV':
-            y_vals = np.abs(voltages * currents) * 1000
-            x_vals = voltages
-        else:
-            max_j = np.max(np.abs(currents / area)) * 1000 if len(currents) > 0 else 1
-            y_vals = (currents / area * 1000) / max_j if max_j > 0 else currents
-            x_vals = voltages
+        x_vals, y_vals, used_norm = self._get_mode_coords(voltages, currents, area)
 
         self._axes.plot(
             x_vals, y_vals,
@@ -300,30 +316,40 @@ class IVCanvas(QWidget):
             zorder=3
         )
 
-        if self._mpp_check.isChecked() and style.show_mpp and params.vmpp > 0:
+        if self._mpp_check.isChecked() and style.show_mpp and params.vmpp > 0 and params.impp > 0:
             if self._current_mode == 'IV':
+                mpp_x = params.vmpp
                 mpp_y = params.impp * 1000
             elif self._current_mode == 'JV':
+                mpp_x = params.vmpp
                 mpp_y = params.jmpp * 1000
             elif self._current_mode == 'PV':
+                mpp_x = params.vmpp
                 mpp_y = params.pmpp * 1000
             else:
-                max_j = params.jsc * 1000 if params.jsc > 0 else 1
-                mpp_y = (params.jmpp * 1000) / max_j
+                mpp_x = params.vmpp
+                if used_norm is not None and used_norm > 0:
+                    mpp_y = (params.jmpp * 1000) / used_norm
+                else:
+                    jsc_norm = params.jsc * 1000 if params.jsc > 0 else 1.0
+                    mpp_y = (params.jmpp * 1000) / jsc_norm
 
-            self._axes.scatter(
-                [params.vmpp], [mpp_y],
-                color=style.color, s=80, marker='*',
-                edgecolors='black', linewidths=0.8, zorder=5
-            )
-            self._axes.annotate(
-                f' MPP\n({params.vmpp:.3f}V, {mpp_y:.2f})',
-                (params.vmpp, mpp_y),
-                fontsize=7.5,
-                textcoords='offset points',
-                xytext=(8, 5),
-                bbox=dict(boxstyle='round,pad=0.3', fc='white', ec=style.color, alpha=0.85)
-            )
+            if np.isfinite(mpp_x) and np.isfinite(mpp_y):
+                self._axes.scatter(
+                    [mpp_x], [mpp_y],
+                    color=style.color, s=80, marker='*',
+                    edgecolors='black', linewidths=0.8, zorder=5
+                )
+                self._axes.annotate(
+                    f' MPP\n({mpp_x:.3f}V, {mpp_y:.2f})',
+                    xy=(float(mpp_x), float(mpp_y)),
+                    xycoords='data',
+                    fontsize=7.5,
+                    textcoords='offset points',
+                    xytext=(8, 5),
+                    bbox=dict(boxstyle='round,pad=0.3', fc='white', ec=style.color, alpha=0.85),
+                    zorder=6
+                )
 
     def _draw_reference_lines(self):
         if self._zero_check.isChecked():
@@ -358,24 +384,16 @@ class IVCanvas(QWidget):
         for _, (dataset, params, style) in self._curves.items():
             if not style.visible or len(dataset.voltages) == 0:
                 continue
-            vs = np.array(dataset.voltages)
-            cs = np.array(dataset.currents)
+            vs = np.array(dataset.voltages, dtype=np.float64)
+            cs = np.array(dataset.currents, dtype=np.float64)
             area = params.cell_area if params.cell_area > 0 else 1.0
 
-            if self._current_mode == 'IV':
-                ys = cs * 1000
-            elif self._current_mode == 'JV':
-                ys = (cs / area) * 1000
-            elif self._current_mode == 'PV':
-                ys = np.abs(vs * cs) * 1000
-            else:
-                max_j = np.max(np.abs(cs / area)) * 1000 if len(cs) > 0 else 1
-                ys = (cs / area * 1000) / max_j if max_j > 0 else cs
+            _, ys, _ = self._get_mode_coords(vs, cs, area)
 
-            all_xlim[0] = min(all_xlim[0], np.min(vs))
-            all_xlim[1] = max(all_xlim[1], np.max(vs))
-            all_ylim[0] = min(all_ylim[0], np.min(ys))
-            all_ylim[1] = max(all_ylim[1], np.max(ys))
+            all_xlim[0] = min(all_xlim[0], float(np.min(vs)))
+            all_xlim[1] = max(all_xlim[1], float(np.max(vs)))
+            all_ylim[0] = min(all_ylim[0], float(np.min(ys)))
+            all_ylim[1] = max(all_ylim[1], float(np.max(ys)))
 
         if self._x_auto:
             if all_xlim[0] < all_xlim[1]:
