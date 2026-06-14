@@ -22,6 +22,7 @@ from core.data_storage import DeviceStorage, DeviceRecord
 from ui.iv_canvas import IVCanvas
 from ui.calibration_dialog import CalibrationDialog
 from ui.unit_converter_dialog import UnitConverterDialog
+from ui.batch_folder_dialog import BatchFolderDialog
 from exporters.batch_exporter import BatchExporter, ExportFormat
 
 
@@ -229,6 +230,10 @@ class MainWindow(QMainWindow):
         act_folder.setShortcut("Ctrl+Shift+O")
         act_folder.triggered.connect(self._on_add_folder)
         file_menu.addAction(act_folder)
+        act_batch = QAction("📦 批量文件夹处理(参数计算+报告导出)...", self)
+        act_batch.setShortcut("Ctrl+B")
+        act_batch.triggered.connect(self._on_open_batch_folder)
+        file_menu.addAction(act_batch)
         file_menu.addSeparator()
         act_savefig = QAction("保存IV曲线图...", self)
         act_savefig.setShortcut("Ctrl+S")
@@ -312,6 +317,7 @@ class MainWindow(QMainWindow):
         acts = [
             ("打开", self._on_add_files, "Ctrl+O"),
             ("文件夹", self._on_add_folder, None),
+            ("📦批处理", self._on_open_batch_folder, "Ctrl+B"),
             (None, None, None),
             ("重算", self._on_recalculate_all, "F5"),
             ("导出", self._on_export_batch, "Ctrl+E"),
@@ -399,6 +405,14 @@ class MainWindow(QMainWindow):
         if QMessageBox.question(self, "确认导入",
             f"发现 {len(paths)} 个文件，是否全部导入？") != QMessageBox.StandardButton.Yes: return
         self._load_files(paths)
+
+    def _on_open_batch_folder(self):
+        """打开批量文件夹处理对话框"""
+        try:
+            dlg = BatchFolderDialog(storage=self._storage, parent=self)
+            dlg.exec()
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"批量处理对话框启动失败: {e}")
 
     def _load_files(self, paths: List[str]):
         t0 = time.time()
